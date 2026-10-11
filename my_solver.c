@@ -30,6 +30,11 @@ static const uint8_t twist[3][CUBIES] = {
     {0, 0, 0, 0, 0, 0, 0},
 };
 
+/* Precomputed whole-move tables */ 
+static uint8_t msrc[MOVES][CUBIES];
+static uint8_t mtwist[MOVES][CUBIES];
+static const uint8_t ADD3[5] = {0, 1, 2, 0, 1};         /* (a + b) % 3 for a + b in 0..4: Avoids a division. */
+
 static const uint8_t ids_a[TRACKED] = {0, 1, 2, 3};     /* Only looks at the positions and orientations of corner cubies 0 to 3. */
 static const uint8_t ids_b[TRACKED] = {3, 4, 5, 6};     /* Only looks at the positions and orientations of corner cubies 3 to 6. */
 
@@ -65,6 +70,35 @@ static state_t apply_move(state_t state, uint8_t move){
         state = quarter_turn(state, (uint8_t) (move / 3U));
     return state;
 }   
+
+/*  Fill msrc/mtwist by applying each move to the identity state. Runs once at startup, not in the search. */
+static void init_move_table(){
+    state_t id;
+    for(uint8_t i = 0; i < CUBIES; ++i){
+        id.p[i] = i;
+        id.o[i] = 0;
+    }
+
+    for(uint8_t i = 0; i < MOVES; ++i){
+        state_t r = apply_move(id, i);
+        for (uint8_t j = 0; j < CUBIES; ++j) {
+            msrc[i][j]   = r.p[j];    /* composite source */
+            mtwist[i][j] = r.o[j];    /* composite twist (start orientation is 0) */
+        }
+    }
+}
+
+/* Same result as apply_move, one pass, no % 3. */
+static state_t apply_move_tab(const state_t *s, uint8_t m){
+    state_t r;
+    const uint8_t *src = msrc[m], *tw = mtwist[m];
+    for (uint8_t i = 0; i < CUBIES; ++i) {
+        uint8_t from = src[i];
+        r.p[i] = s->p[from];
+        r.o[i] = ADD3[s->o[from] + tw[i]];
+    }
+    return r;
+}
 
 
 /* Read a 4-bit entry from the packed pattern database. */ 
@@ -180,7 +214,7 @@ static int search(state_t start, uint8_t threshold){
             continue;
 
         path[g] = move;
-        states[g + 1] = apply_move(states[g], move);
+        states[g + 1] = apply_move_tab(&states[g], move);
         last_face[g + 1] = face;
 
         status = visit(&states[g + 1], (uint8_t) (g + 1U), threshold);
@@ -266,7 +300,8 @@ static int parse_state(const char *input, state_t *state){
 
 int main(int argc, char **argv){
     state_t state;
-    
+    init_move_table();
+
     if(argc != 2 || !parse_state(argv[1], &state)){
         /* C99 5.1.2.2.1 lets argv[0] be null when argc is 0. */
         fprintf(stderr, "usage: %s PPPPPPPOOOOOOO\n", argc > 0 && argv[0] ? argv[0] : "solver");
