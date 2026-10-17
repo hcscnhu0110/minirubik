@@ -38,6 +38,8 @@ static const uint8_t ADD3[5] = {0, 1, 2, 0, 1};         /* (a + b) % 3 for a + b
 static const uint8_t ids_a[TRACKED] = {0, 1, 2, 3};     /* Only looks at the positions and orientations of corner cubies 0 to 3. */
 static const uint8_t ids_b[TRACKED] = {3, 4, 5, 6};     /* Only looks at the positions and orientations of corner cubies 3 to 6. */
 
+static const uint8_t move_face[MOVES] = {0, 0, 0, 1, 1, 1, 2, 2, 2};   /* Use a lookup table instead */
+
 typedef struct {
     uint8_t p[CUBIES], o[CUBIES];
 } state_t;
@@ -112,20 +114,27 @@ static void pdb_set(uint8_t *pdb, uint32_t index, uint8_t value){
     pdb[index >> 1] = (uint8_t) ((pdb[index >> 1] & ~(0xFU << shift)) | (value << shift));
 }
 
+
+/*
+ * p     = ((r0*6 + r1)*5 + r2)*4 + r3        (permutation part)
+ * o     = ((o0*3 + o1)*3 + o2)*3 + o3        (orientation part)
+ * index = p * 81 + o
+ */
+
+static const uint16_t PW0[7] = {0, 9720, 19440, 29160, 38880, 48600, 58320};        /* r0 * 9720 */
+static const uint16_t PW1[6] = {0, 1620, 3240, 4860, 6480, 8100};                   /* r1 * 1620 */
+static const uint16_t PW2[5] = {0, 324, 648, 972, 1296};                            /* r2 * 324  */
+static const uint8_t  PW3[4] = {0, 81, 162, 243};                                   /* r3 * 81   */
+static const uint8_t  OW0[3] = {0, 27, 54};                                         /* o0 * 27   */
+static const uint8_t  OW1[3] = {0, 9, 18};                                          /* o1 * 9    */
+static const uint8_t  OW2[3] = {0, 3, 6};                                           /* o2 * 3    */
+
 /* Pack the tracked cubies' permutation and orientation into a single index */
 static uint32_t pattern_pack(const uint8_t perm[TRACKED], const uint8_t ori[TRACKED]){
-    static const uint8_t radix[TRACKED] = {7, 6, 5, 4};
-    uint32_t p = 0, o = 0;
-    for (uint8_t k = 0; k < TRACKED; ++k){
-        uint8_t rank = perm[k];
-        for (uint8_t j = 0; j < k; ++j){
-            if (perm[j] < perm[k]) 
-                --rank;
-        }
-        p = p * radix[k] + rank;
-        o = o * 3U + ori[k];
-    }
-    return p * PDB_ORI + o;
+    uint8_t r1 = perm[1] - (perm[0] < perm[1]);
+    uint8_t r2 = perm[2] - (perm[0] < perm[2]) - (perm[1] < perm[2]);
+    uint8_t r3 = perm[3] - (perm[0] < perm[3]) - (perm[1] < perm[3]) - (perm[2] < perm[3]);
+    return PW0[perm[0]] + PW1[r1] + PW2[r2] + PW3[r3] + OW0[ori[0]] + OW1[ori[1]] + OW2[ori[2]] + ori[3];
 }
 
 /*Extract the tracked cubies from the full cube state and encode their permutation and orientation into a pattern index.*/
@@ -209,7 +218,7 @@ static int search(state_t start, uint8_t threshold){
         }
 
         move = next_move[g]++;
-        face = (uint8_t) (move / 3U);
+        face = move_face[move];
         if(face == last_face[g])       
             continue;
 
